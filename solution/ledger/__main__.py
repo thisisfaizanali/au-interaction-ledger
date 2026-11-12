@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from . import db
+from .events import ingest_events, load_dispositions
 from .leads import ingest_leads
 from .pii import Pii
 
@@ -26,10 +27,14 @@ def main(argv=None) -> int:
     pii = Pii.load(args.db)
     conn = db.connect(args.db)
     try:
+        load_dispositions(conn)
+        conn.commit()
         for drop in args.drops:
             print(f"== {drop}")
             try:
                 for line in ingest_leads(conn, pii, drop):
+                    print(line)
+                for line in ingest_events(conn, pii, drop):
                     print(line)
             except BaseException:
                 conn.rollback()  # one transaction per drop: nothing half-applied

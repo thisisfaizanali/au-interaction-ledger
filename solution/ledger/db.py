@@ -70,6 +70,39 @@ BEGIN SELECT RAISE(ABORT, 'events ledger is append-only'); END;
 
 CREATE INDEX IF NOT EXISTS events_by_phone ON events (workflow_id, phone_hash);
 CREATE INDEX IF NOT EXISTS events_by_call ON events (workflow_id, call_id);
+
+-- Which lead each event belongs to; lead_id NULL means orphan. Computed at query time, so
+-- an event whose lead arrives in a later drop stops being an orphan with no rewrite.
+CREATE VIEW IF NOT EXISTS event_links AS
+WITH by_phone AS (  -- every event except overrides links by (workflow, phone)
+    SELECT e.event_id, e.workflow_id, e.call_id, l.id AS lead_id
+    FROM events e
+    LEFT JOIN leads l ON l.workflow_id = e.workflow_id AND l.phone_hash = e.phone_hash
+    WHERE e.event_type != 'disposition.override'
+),
+call_lead AS (  -- a call's lead, from its phone-linked events (MIN if they ever disagree)
+    SELECT workflow_id, call_id, MIN(lead_id) AS lead_id
+    FROM by_phone
+    WHERE lead_id IS NOT NULL
+    GROUP BY workflow_id, call_id
+)
+SELECT event_id, lead_id FROM by_phone
+UNION ALL  -- overrides carry no phone: link through their call
+SELECT e.event_id, c.lead_id
+FROM events e
+LEFT JOIN call_lead c ON c.workflow_id = e.workflow_id AND c.call_id = e.call_id
+WHERE e.event_type = 'disposition.override';
+
+-- The linked, usable ledger: orphans and unknown disposition codes are left out.
+-- Every report is built on this view.
+CREATE VIEW IF NOT EXISTS ledger AS
+SELECT e.event_id, k.lead_id, e.event_type, e.call_id, e.occurred_at, e.disposition_code
+FROM events e
+JOIN event_links k ON k.event_id = e.event_id
+WHERE k.lead_id IS NOT NULL
+  AND (e.event_type NOT LIKE 'disposition.%'
+       OR EXISTS (SELECT 1 FROM dispositions d
+                  WHERE d.workflow_id = e.workflow_id AND d.code = e.disposition_code));
 """
 
 

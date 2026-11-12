@@ -80,6 +80,29 @@ def _ingest_file(conn, pii: Pii, path: Path, file_id: int) -> tuple[int, int, in
     return total, malformed, duplicate
 
 
+def event_quality(conn: sqlite3.Connection) -> dict:
+    """Event counts for data_quality.json, reflecting everything ingested so far."""
+    totals = conn.execute(
+        "SELECT COALESCE(SUM(events_total), 0), COALESCE(SUM(events_malformed), 0),"
+        " COALESCE(SUM(events_duplicate), 0) FROM ingested_files"
+    ).fetchone()
+    orphans = conn.execute("SELECT COUNT(*) FROM event_links WHERE lead_id IS NULL").fetchone()[0]
+    # orphans are counted only as orphans, so unknown codes are counted among linked events
+    unknown = conn.execute(
+        "SELECT COUNT(*) FROM events e JOIN event_links k ON k.event_id = e.event_id"
+        " WHERE k.lead_id IS NOT NULL AND e.event_type LIKE 'disposition.%'"
+        " AND NOT EXISTS (SELECT 1 FROM dispositions d"
+        "                 WHERE d.workflow_id = e.workflow_id AND d.code = e.disposition_code)"
+    ).fetchone()[0]
+    return {
+        "events_total": totals[0],
+        "malformed_events": totals[1],
+        "duplicate_events_dropped": totals[2],
+        "orphan_events": orphans,
+        "unknown_disposition_events": unknown,
+    }
+
+
 def ingest_events(conn: sqlite3.Connection, pii: Pii, drop: Path):
     """Ingest every event file of one drop. Caller owns the transaction. Yields summary lines."""
     events_dir = Path(drop) / "events"

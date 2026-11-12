@@ -26,7 +26,10 @@ class Pii:
             return cls(env.encode())
         key_file = Path(str(db_path) + ".key")
         if not key_file.exists():
-            key_file.write_bytes(Fernet.generate_key())
+            # atomic create, owner-only (a no-op for group/other bits on Windows)
+            fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(Fernet.generate_key())
         return cls(key_file.read_bytes().strip())
 
     def phone_hash(self, canonical_phone: str) -> str:

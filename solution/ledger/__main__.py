@@ -8,6 +8,7 @@ from . import db
 from .events import ingest_events, load_dispositions
 from .leads import ingest_leads
 from .pii import Pii
+from .reports import write_reports
 
 
 def main(argv=None) -> int:
@@ -21,8 +22,13 @@ def main(argv=None) -> int:
     args = p.parse_args(argv)
 
     if args.command == "report":
-        print("report: not implemented yet", file=sys.stderr)
-        return 2
+        conn = db.connect(args.db)  # reports need no PII, so the key is neither loaded nor created
+        try:
+            write_reports(conn, args.out)
+        finally:
+            conn.close()
+        print(f"reports written to {args.out}")
+        return 0
 
     pii = Pii.load(args.db)
     conn = db.connect(args.db)

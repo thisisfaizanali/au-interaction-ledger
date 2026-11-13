@@ -24,7 +24,11 @@ skill. Honest answers are never held against you. Discovering undisclosed use is
 - Drafting `solution/README.md`, `SUBMISSION.md` and this file.
 
 ## What I wrote or decided myself
-<FILL: in your own words>
+- Chose Assignment A over B after weighing them: A is deterministic and fully testable offline, which fit a short deadline on a Windows machine better than B's crash and timing behaviour.
+- Designed the workflow the project ran on: a planning session that only plans and reviews, an implementation session that only implements, one branch and one pull request per milestone, review of the real diff before every merge, no amend, rebase or force push, and an explicit list of git commands each prompt may use.
+- Approved the main design choices: SQLite over Postgres, keyed HMAC for phone matching plus Fernet encryption for PII, file-content hashing for idempotent re-ingest, linking events to leads at query time, and building the reports in SQL.
+- Set up the repository (starting from the hiring team's repo with its history, private remote), the Python environment and the permissions the sessions ran under, and decided what they were and were not allowed to do without me.
+- Kept the original starter files unmodified and left the AI-written docs honest about what the AI did versus what I did.
 
 ## Where the AI was wrong or unhelpful
 - **Report SQL that never finished.** The first version of the report queries did not finish in

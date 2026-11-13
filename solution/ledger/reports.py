@@ -11,9 +11,11 @@ from pathlib import Path
 
 from .events import event_quality
 
-# call_ev: one row per (lead, call) with its event flags. call_facts: calls only, with the
-# effective disposition resolved. lead_stats: one row per lead with its bucket and call stats.
-_BASE = """
+# The fact tables are built once per run as TEMP tables, so no report query re-evaluates the
+# ledger view. call_facts: one row per call (a linked call.initiated exists), with its flags and
+# effective disposition. lead_stats: one row per lead with its bucket and call stats.
+_CALL_FACTS = """
+CREATE TEMP TABLE call_facts AS
 WITH call_ev AS (
     SELECT lead_id, call_id,
            MIN(CASE WHEN event_type = 'call.initiated' THEN occurred_at END) AS initiated_at,
@@ -33,56 +35,63 @@ eff AS (  -- effective disposition: the latest override, else the latest set (ti
         FROM ledger
         WHERE event_type LIKE 'disposition.%' AND call_id IS NOT NULL
     ) WHERE rn = 1
-),
-call_facts AS (
-    SELECT ev.lead_id, l.workflow_id, ev.call_id, ev.initiated_at,
-           substr(ev.initiated_at, 1, 10) AS call_date,
-           ev.connected, ev.failed, e.code, d.is_terminal, d.is_success
-    FROM call_ev ev
-    JOIN leads l ON l.id = ev.lead_id
-    LEFT JOIN eff e ON e.lead_id = ev.lead_id AND e.call_id = ev.call_id
-    LEFT JOIN dispositions d ON d.workflow_id = l.workflow_id AND d.code = e.code
-    WHERE ev.initiated_at IS NOT NULL
-),
-latest_disp AS (  -- code of each lead's most recent call that has an effective disposition
-    SELECT lead_id, code FROM (
-        SELECT lead_id, code,
-               ROW_NUMBER() OVER (PARTITION BY lead_id ORDER BY initiated_at DESC, call_id DESC) AS rn
-        FROM call_facts WHERE code IS NOT NULL
-    ) WHERE rn = 1
-),
-lead_stats AS (
-    SELECT l.id, l.workflow_id, l.external_ref, l.batch_id, l.phone_last4,
-           CASE WHEN COUNT(f.call_id) = 0 THEN 'yet_to_reach_out'
-                WHEN MAX(COALESCE(f.is_terminal, 0)) = 1 THEN 'completed'
-                WHEN MIN(f.failed) = 1 THEN 'in_progress_telephony_failed'
-                ELSE 'in_progress_dialed' END AS bucket,
-           COUNT(f.call_id) AS total_calls,
-           COALESCE(SUM(f.connected), 0) AS connected_calls,
-           MAX(f.initiated_at) AS last_call_at,
-           ld.code AS current_disposition,
-           COALESCE(MAX(f.is_success), 0) AS ever_success
-    FROM leads l
-    LEFT JOIN call_facts f ON f.lead_id = l.id
-    LEFT JOIN latest_disp ld ON ld.lead_id = l.id
-    GROUP BY l.id
 )
+SELECT ev.lead_id, l.workflow_id, ev.call_id, ev.initiated_at,
+       substr(ev.initiated_at, 1, 10) AS call_date,
+       ev.connected, ev.failed, e.code, d.is_terminal, d.is_success
+FROM call_ev ev
+JOIN leads l ON l.id = ev.lead_id
+LEFT JOIN eff e ON e.lead_id = ev.lead_id AND e.call_id = ev.call_id
+LEFT JOIN dispositions d ON d.workflow_id = l.workflow_id AND d.code = e.code
+WHERE ev.initiated_at IS NOT NULL
 """
 
-_BATCH_SUMMARY = _BASE + """
+# Per-lead pieces are keyed tables so the final join to `leads` is a primary key lookup
+# (joining the call_facts CTE directly made SQLite scan it once per lead).
+_LEAD_CALLS = """
+CREATE TEMP TABLE lead_calls (lead_id INTEGER PRIMARY KEY, total_calls, connected_calls,
+                              last_call_at, any_terminal, all_failed, ever_success);
+INSERT INTO lead_calls
+SELECT lead_id, COUNT(*), SUM(connected), MAX(initiated_at), MAX(COALESCE(is_terminal, 0)),
+       MIN(failed), MAX(COALESCE(is_success, 0))
+FROM call_facts GROUP BY lead_id;
+CREATE TEMP TABLE latest_disp (lead_id INTEGER PRIMARY KEY, code);  -- most recent call with a disposition
+INSERT INTO latest_disp
+SELECT lead_id, code FROM (
+    SELECT lead_id, code,
+           ROW_NUMBER() OVER (PARTITION BY lead_id ORDER BY initiated_at DESC, call_id DESC) AS rn
+    FROM call_facts WHERE code IS NOT NULL
+) WHERE rn = 1;
+CREATE TEMP TABLE lead_stats AS
+SELECT l.id, l.workflow_id, l.external_ref, l.batch_id, l.phone_last4,
+       CASE WHEN lc.lead_id IS NULL THEN 'yet_to_reach_out'
+            WHEN lc.any_terminal = 1 THEN 'completed'
+            WHEN lc.all_failed = 1 THEN 'in_progress_telephony_failed'
+            ELSE 'in_progress_dialed' END AS bucket,
+       COALESCE(lc.total_calls, 0) AS total_calls,
+       COALESCE(lc.connected_calls, 0) AS connected_calls,
+       lc.last_call_at,
+       ld.code AS current_disposition,
+       COALESCE(lc.ever_success, 0) AS ever_success
+FROM leads l
+LEFT JOIN lead_calls lc ON lc.lead_id = l.id
+LEFT JOIN latest_disp ld ON ld.lead_id = l.id;
+"""
+
+_BATCH_SUMMARY = """
 SELECT workflow_id, batch_id, COUNT(*),
        SUM(bucket = 'yet_to_reach_out'), SUM(bucket = 'in_progress_telephony_failed'),
        SUM(bucket = 'in_progress_dialed'), SUM(bucket = 'completed')
 FROM lead_stats GROUP BY workflow_id, batch_id ORDER BY workflow_id, batch_id
 """
 
-_DAILY = _BASE + """
+_DAILY = """
 SELECT workflow_id, call_date, COUNT(*), SUM(connected),
        COUNT(DISTINCT CASE WHEN is_success = 1 THEN lead_id END)
 FROM call_facts GROUP BY workflow_id, call_date ORDER BY workflow_id, call_date
 """
 
-_LEADS = _BASE + """
+_LEADS = """
 SELECT workflow_id, external_ref, batch_id, phone_last4, bucket, total_calls, connected_calls,
        last_call_at, current_disposition, ever_success
 FROM lead_stats ORDER BY workflow_id, external_ref, id
@@ -123,6 +132,12 @@ def _data_quality(conn: sqlite3.Connection) -> dict:
 def write_reports(conn: sqlite3.Connection, out_dir: Path) -> None:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    for table in ("call_facts", "lead_calls", "latest_disp", "lead_stats"):
+        conn.execute(f"DROP TABLE IF EXISTS temp.{table}")
+    conn.execute(_CALL_FACTS)
+    conn.execute("CREATE INDEX temp.call_facts_lead ON call_facts (lead_id)")
+    conn.executescript(_LEAD_CALLS)
 
     _write_csv(
         out_dir / "batch_summary.csv",

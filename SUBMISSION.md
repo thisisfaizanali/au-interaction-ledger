@@ -3,9 +3,9 @@
 > Replace everything in _italics_. Be concise: bullet points are fine. We read every word.
 
 ## Candidate
-- **Name:** <FILL: your name>
+- **Name:** Faizan Ali
 - **Assignment chosen:** A (Data)
-- **Time spent (honest estimate):** <FILL: hours>
+- **Time spent (honest estimate):** about 5h of my own time across two days (planning, reviewing, setup and testing); most of the code was written by AI sessions, see `AI_USAGE.md`
 
 ## How to run
 From a clean clone (macOS / Linux shown; Windows PowerShell commands are in [`solution/README.md`](solution/README.md)):

@@ -29,7 +29,7 @@ skill. Honest answers are never held against you. Discovering undisclosed use is
 ## Where the AI was wrong or unhelpful
 - **Report SQL that never finished.** The first version of the report queries did not finish in
   30+ minutes on the large dataset (about 133k leads, 613k events). The first suggested fix, two
-  temp tables, was still over 4 minutes. I found the cause by timing the run and reading
+  temp tables, was still over 4 minutes. The implementation session found the cause by timing the run and reading
   `EXPLAIN QUERY PLAN`: SQLite planned the join to a CTE as a scan per lead. The fix that worked was
   materializing `call_facts`, `lead_calls`, `latest_disp` and `lead_stats` as TEMP tables keyed by
   `lead_id`. Output was byte-identical before and after.
@@ -47,5 +47,5 @@ skill. Honest answers are never held against you. Discovering undisclosed use is
   (42 and 7); all matched.
 - Byte-identical reports across split ingest (`drop_1` then `drop_2`), one-shot ingest and repeated
   ingest, each with a fresh PII key.
-- Every pull request diff was reviewed before merge.
+- Every pull request diff was reviewed by the planning session against the actual branch (not the summary) before merge.
 - Real runs on generated data before each behaviour-changing commit.

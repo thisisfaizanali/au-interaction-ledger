@@ -111,7 +111,7 @@ flowchart LR
 
 **Large scale** (seed 42, 132,903 leads, 632,602 event lines of which 613,481 are stored; Windows laptop, Python 3.12, SQLite):
 - First measurement: ingest of both drops 68.3 s, report 50.1 s (about 118 s in total).
-- Rerun on the same laptop while I was doing other work: ingest 98.7 s, report 53.2 s (about 152 s in total). Ingest time varied by about 30 s between runs, so I would not promise a number under 2 minutes.
+- Rerun on the same laptop later the same day: ingest 98.7 s, report 53.2 s (about 152 s in total). Ingest time varied by about 30 s between runs, so I would not promise a number under 2 minutes.
 - Rerun counts: 143,990 lead rows, 7,097 rejected, 3,990 merged, 34,424 orphan events, 1,005 unknown dispositions.
 - The first version of the report SQL did not finish in 30+ minutes. SQLite planned the join to a CTE as a scan per lead. The fix was to materialize `call_facts`, `lead_calls`, `latest_disp` and `lead_stats` as TEMP tables keyed by `lead_id`, so the final joins are primary-key lookups. The output was byte-identical before and after.
 
